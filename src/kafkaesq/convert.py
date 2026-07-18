@@ -112,8 +112,14 @@ def _confluent_to_snake(
         else:
             unmapped.append(key)
 
-    if ssl_keys_present:
-        result["ssl_context"] = _build_ssl_context(config)
+    if not ssl_as_files:
+        if ssl_keys_present:
+            result["ssl_context"] = _build_ssl_context(config)
+        elif str(result.get("security_protocol", "")).upper() in ("SSL", "SASL_SSL"):
+            # aiokafka refuses SSL/SASL_SSL without an ssl_context, while
+            # librdkafka falls back to the system CA store (e.g. a Confluent
+            # Cloud config has no ssl.* keys at all) — mirror that fallback.
+            result["ssl_context"] = ssl.create_default_context()
 
     _handle_unmapped(unmapped, target, on_unmapped)
     return result
@@ -163,7 +169,10 @@ def confluent_to_aiokafka(
 
     Returns a dict of snake_case kwargs suitable for ``AIOKafkaProducer`` /
     ``AIOKafkaConsumer``. librdkafka ``ssl.*`` file options are folded into a
-    single ``ssl_context`` entry.
+    single ``ssl_context`` entry. If ``security.protocol`` is SSL-based but no
+    ``ssl.*`` options are set (librdkafka would use the system CA store, e.g.
+    a Confluent Cloud config), a default ``ssl_context`` is supplied, since
+    aiokafka requires one for SSL protocols.
 
     ``on_unmapped`` controls what happens to keys with no aiokafka equivalent
     (callbacks, librdkafka internals, ...): ``"raise"``, ``"warn"`` (default,

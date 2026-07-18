@@ -31,6 +31,8 @@ Issues = "https://github.com/wbarnha/kafkaesq/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+# For integration tests that construct real clients from converted configs.
+integration = ["aiokafka", "kafka-python", "confluent-kafka"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/kafkaesq"]

@@ -114,3 +114,13 @@ confluent_to_aiokafka(conf, on_unmapped="ignore")  # drop silently
 pip install -e .[dev]
 pytest
 ```
+
+The suite includes integration tests that feed converted configs to the real
+`confluent_kafka`, `aiokafka`, and `kafka-python` client constructors (no
+broker needed — all three validate option names at construction time). They
+skip automatically unless the clients are installed:
+
+```
+pip install -e .[dev,integration]
+pytest
+```

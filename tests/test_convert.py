@@ -76,6 +76,8 @@ class TestConfluentToAiokafka:
                 "sasl.password": "secret",
             }
         )
+        # SASL_SSL without ssl.* keys gets a default ssl_context.
+        assert isinstance(result.pop("ssl_context"), ssl.SSLContext)
         assert result == {
             "security_protocol": "SASL_SSL",
             "sasl_mechanism": "SCRAM-SHA-256",
@@ -221,7 +223,10 @@ class TestRoundTrip:
             "session.timeout.ms": 45000,
             "acks": "all",
         }
-        assert aiokafka_to_confluent(confluent_to_aiokafka(original)) == original
+        kwargs = confluent_to_aiokafka(original)
+        # SASL_SSL gets a default ssl_context, which cannot round-trip.
+        assert isinstance(kwargs.pop("ssl_context"), ssl.SSLContext)
+        assert aiokafka_to_confluent(kwargs) == original
 
     def test_aiokafka_round_trip(self) -> None:
         original = {
@@ -235,7 +240,9 @@ class TestRoundTrip:
             "fetch_max_wait_ms": 500,
             "isolation_level": "read_committed",
         }
-        assert confluent_to_aiokafka(aiokafka_to_confluent(original)) == original
+        result = confluent_to_aiokafka(aiokafka_to_confluent(original))
+        assert isinstance(result.pop("ssl_context"), ssl.SSLContext)
+        assert result == original
 
 
 class TestConfluentToKafkaPython:
