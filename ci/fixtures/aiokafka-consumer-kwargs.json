@@ -1,0 +1,22 @@
+{
+  "bootstrap_servers": "localhost:9092",
+  "group_id": "kafkaesq-ci",
+  "group_instance_id": "kafkaesq-ci-1",
+  "client_id": "kafkaesq-ci-client",
+  "session_timeout_ms": 45000,
+  "heartbeat_interval_ms": 3000,
+  "max_poll_interval_ms": 300000,
+  "enable_auto_commit": false,
+  "auto_commit_interval_ms": 5000,
+  "auto_offset_reset": "earliest",
+  "fetch_min_bytes": 1,
+  "fetch_max_bytes": 52428800,
+  "fetch_max_wait_ms": 500,
+  "max_partition_fetch_bytes": 1048576,
+  "isolation_level": "read_committed",
+  "check_crcs": true,
+  "request_timeout_ms": 30000,
+  "metadata_max_age_ms": 300000,
+  "connections_max_idle_ms": 540000,
+  "retry_backoff_ms": 100
+}

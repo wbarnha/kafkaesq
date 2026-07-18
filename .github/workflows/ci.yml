@@ -19,8 +19,64 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Install package and test dependencies
         run: python -m pip install -e .[dev,integration]
+      - name: Install Faust for integration tests
+        if: matrix.python-version == '3.12'
+        run: python -m pip install faust-streaming
       - name: Run tests
         run: python -m pytest -v
+
+  # Constructs real confluent-kafka-go clients from CLI-converted configs.
+  # librdkafka rejects unknown properties at construction, so this proves
+  # kafkaesq's output is accepted by the Go client. No broker needed.
+  go-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Install kafkaesq
+        run: python -m pip install .
+      - name: Convert aiokafka kwargs to confluent configs with the CLI
+        run: |
+          kafkaesq ci/fixtures/aiokafka-consumer-kwargs.json --to confluent -o /tmp/consumer.json
+          kafkaesq ci/fixtures/aiokafka-producer-kwargs.json --to confluent -o /tmp/producer.json
+      - name: Construct confluent-kafka-go clients from converted configs
+        working-directory: ci/go-validate
+        run: go run . /tmp/consumer.json /tmp/producer.json
+
+  # Validates a CLI-generated .properties file against the Apache Kafka Java
+  # client: every key must be a known ConsumerConfig name and the file must
+  # construct a real KafkaConsumer. No broker needed.
+  java-client:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Install kafkaesq
+        run: python -m pip install .
+      - name: Convert aiokafka kwargs to a Java properties file with the CLI
+        run: >
+          kafkaesq ci/fixtures/java-consumer-kwargs.json --to confluent
+          --format properties -o /tmp/client.properties
+      - name: Fetch kafka-clients
+        run: |
+          curl -fsSL -o kafka-clients.jar https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.7.1/kafka-clients-3.7.1.jar
+          curl -fsSL -o slf4j-api.jar https://repo1.maven.org/maven2/org/slf4j/slf4j-api/1.7.36/slf4j-api-1.7.36.jar
+          curl -fsSL -o slf4j-nop.jar https://repo1.maven.org/maven2/org/slf4j/slf4j-nop/1.7.36/slf4j-nop-1.7.36.jar
+      - name: Validate properties against the Java client
+        run: |
+          javac -cp kafka-clients.jar ci/java-validate/ValidateConfig.java -d out
+          java -cp "out:kafka-clients.jar:slf4j-api.jar:slf4j-nop.jar" ValidateConfig /tmp/client.properties
 
   build:
     runs-on: ubuntu-latest
