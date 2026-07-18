@@ -118,13 +118,13 @@ class TestValidateValuesAndPortability:
     ) -> None:
         # Valid librdkafka keys outside kafkaesq's cross-library table must
         # not fail validation by default (they may be fine for the source).
-        config_file = tmp_path / "go.json"
+        config_file = tmp_path / "extras.json"
         config_file.write_text(
             json.dumps(
                 {
                     "bootstrap.servers": "b:9092",
                     "statistics.interval.ms": 1000,
-                    "go.events.channel.enable": True,
+                    "internal.termination.signal": 29,
                 }
             )
         )
@@ -133,6 +133,66 @@ class TestValidateValuesAndPortability:
         assert "unrecognized (2)" in out
         code, _, _ = run_cli(["validate", str(config_file), "--strict"], capsys)
         assert code == 1
+
+
+class TestValidateGoConfigs:
+    GO_CONSUMER = {
+        "bootstrap.servers": "b:9092",
+        "group.id": "orders",
+        "auto.offset.reset": "earliest",
+        "go.events.channel.enable": True,
+        "go.application.rebalance.enable": True,
+    }
+
+    def test_go_binding_keys_get_guidance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config_file = tmp_path / "go-consumer.json"
+        config_file.write_text(json.dumps(self.GO_CONSUMER))
+        code, out, _ = run_cli(["validate", str(config_file)], capsys)
+        assert code == 0
+        assert "go-binding (2):" in out
+        assert "go.events.channel.enable" in out
+        assert ".Poll()" in out
+        assert "result: OK (2 warning(s))" in out
+
+    def test_unknown_go_prefixed_key_uses_generic_guidance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config_file = tmp_path / "go.json"
+        config_file.write_text(
+            json.dumps({"bootstrap.servers": "b:9092", "go.future.option": 1})
+        )
+        code, out, _ = run_cli(["validate", str(config_file)], capsys)
+        assert code == 0
+        assert "go-binding (1):" in out
+        assert "configured in Go code only" in out
+
+    def test_strict_fails_on_go_binding_keys(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config_file = tmp_path / "go-consumer.json"
+        config_file.write_text(json.dumps(self.GO_CONSUMER))
+        code, _, _ = run_cli(["validate", str(config_file), "--strict"], capsys)
+        assert code == 1
+
+    def test_json_report_has_go_binding_section(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        config_file = tmp_path / "go-consumer.json"
+        config_file.write_text(json.dumps(self.GO_CONSUMER))
+        code, out, _ = run_cli(
+            ["validate", str(config_file), "--format", "json"], capsys
+        )
+        assert code == 0
+        report = json.loads(out)
+        assert sorted(report["go_binding"]) == [
+            "go.application.rebalance.enable",
+            "go.events.channel.enable",
+        ]
+        assert report["valid"] is True
+        # The librdkafka keys still convert for Python targets.
+        assert report["portability"]["aiokafka"]["portable"] == 3
 
     def test_ssl_file_keys_portability(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]

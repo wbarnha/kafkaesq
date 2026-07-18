@@ -36,6 +36,7 @@ except ModuleNotFoundError:
     yaml = None
 
 from ._faust import BY_CONFLUENT_KEY_FOR_FAUST, BY_FAUST_KEY, looks_like_faust
+from ._go import go_binding_guidance
 from ._java import java_only_guidance
 from ._mappings import (
     BY_CONFLUENT_KEY,
@@ -372,6 +373,7 @@ def _build_validation_report(
 ) -> dict[str, Any]:
     ok: list[str] = []
     java_only: dict[str, str] = {}
+    go_binding: dict[str, str] = {}
     unrecognized: list[str] = []
     invalid: dict[str, str] = {}
     portable: dict[str, list[str]] = {
@@ -381,13 +383,16 @@ def _build_validation_report(
     for key, value in config.items():
         canonical, converter = _lookup_key(key, source)
         if canonical is None:
-            guidance = (
-                java_only_guidance(key, value) if source == "confluent" else None
-            )
-            if guidance is not None:
-                java_only[key] = guidance
-            else:
-                unrecognized.append(key)
+            if source == "confluent":
+                go_guidance = go_binding_guidance(key)
+                if go_guidance is not None:
+                    go_binding[key] = go_guidance
+                    continue
+                guidance = java_only_guidance(key, value)
+                if guidance is not None:
+                    java_only[key] = guidance
+                    continue
+            unrecognized.append(key)
             continue
         if converter is not None:
             try:
@@ -405,6 +410,7 @@ def _build_validation_report(
         "total": len(config),
         "ok": ok,
         "java_only": java_only,
+        "go_binding": go_binding,
         "unrecognized": unrecognized,
         "invalid": invalid,
         "portability": {
@@ -423,6 +429,10 @@ def _print_validation_report(report: dict[str, Any], out: TextIO) -> None:
         print(f"java-only ({len(report['java_only'])}):", file=out)
         for key, guidance in report["java_only"].items():
             print(f"  {key}: {guidance}", file=out)
+    if report["go_binding"]:
+        print(f"go-binding ({len(report['go_binding'])}):", file=out)
+        for key, guidance in report["go_binding"].items():
+            print(f"  {key}: {guidance}", file=out)
     if report["unrecognized"]:
         print(
             f"unrecognized ({len(report['unrecognized'])}): "
@@ -439,10 +449,14 @@ def _print_validation_report(report: dict[str, Any], out: TextIO) -> None:
         for lib, stats in report["portability"].items()
     )
     print(f"portability: {portability}", file=out)
+    warning_count = (
+        len(report["java_only"])
+        + len(report["go_binding"])
+        + len(report["unrecognized"])
+    )
     if not report["valid"]:
         print("result: INVALID (bad values)", file=out)
-    elif report["java_only"] or report["unrecognized"]:
-        warning_count = len(report["java_only"]) + len(report["unrecognized"])
+    elif warning_count:
         print(f"result: OK ({warning_count} warning(s))", file=out)
     else:
         print("result: OK", file=out)
@@ -508,7 +522,9 @@ def _validate_main(argv: list[str], stderr: TextIO) -> int:
         return 1
     if not report["valid"]:
         return 1
-    if args.strict and (report["java_only"] or report["unrecognized"]):
+    if args.strict and (
+        report["java_only"] or report["go_binding"] or report["unrecognized"]
+    ):
         return 1
     return 0
 

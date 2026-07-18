@@ -171,10 +171,17 @@ result: OK (6 warning(s))
 
 Java-only keys (JKS truststores, JAAS login strings, class-based
 serializers, `max.poll.records`, ...) get targeted guidance instead of a
-generic warning; credentials found in JAAS strings are never echoed. Bad
-values (`session.timeout.ms=45s`) make validation fail with exit code 1;
-unrecognized keys are warnings unless `--strict` is passed. `--format json`
-emits the report as JSON for CI pipelines.
+generic warning; credentials found in JAAS strings are never echoed.
+confluent-kafka-go configs are supported the same way: the librdkafka keys
+validate normally and the Go binding's `go.*` options (`go.events.channel.enable`,
+`go.delivery.reports`, ...) are reported as Go-only with guidance. Pure-Go
+clients (sarama, segmentio/kafka-go, franz-go) configure via Go structs and
+option functions rather than a standard config file, so there is nothing
+file-shaped to validate — use kafkaesq's confluent/JSON output as the
+reference to translate from. Bad values (`session.timeout.ms=45s`) make
+validation fail with exit code 1; unrecognized keys are warnings unless
+`--strict` is passed. `--format json` emits the report as JSON for CI
+pipelines.
 
 ### Keys that can't be converted
 
