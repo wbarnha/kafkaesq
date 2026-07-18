@@ -1,0 +1,9 @@
+{
+  "bootstrap.servers": "localhost:9092",
+  "group.id": "orders",
+  "auto.offset.reset": "earliest",
+  "enable.auto.commit": false,
+  "session.timeout.ms": 45000,
+  "go.events.channel.enable": true,
+  "go.application.rebalance.enable": true
+}

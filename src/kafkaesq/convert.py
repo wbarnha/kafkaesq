@@ -6,6 +6,7 @@ import ssl
 import warnings
 from typing import Any, Mapping as TypingMapping
 
+from ._faust import BY_CONFLUENT_KEY_FOR_FAUST, BY_FAUST_KEY
 from ._mappings import (
     BY_CONFLUENT_KEY,
     BY_CONFLUENT_SSL_KEY,
@@ -20,7 +21,9 @@ __all__ = [
     "UnmappedConfigError",
     "aiokafka_to_confluent",
     "confluent_to_aiokafka",
+    "confluent_to_faust",
     "confluent_to_kafka_python",
+    "faust_to_confluent",
     "kafka_python_to_confluent",
 ]
 
@@ -95,6 +98,7 @@ def _confluent_to_snake(
     target: str,
     ssl_as_files: bool,
     on_unmapped: str,
+    build_ssl_context: bool = True,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     unmapped: list[str] = []
@@ -112,7 +116,7 @@ def _confluent_to_snake(
         else:
             unmapped.append(key)
 
-    if not ssl_as_files:
+    if not ssl_as_files and build_ssl_context:
         if ssl_keys_present:
             result["ssl_context"] = _build_ssl_context(config)
         elif str(result.get("security_protocol", "")).upper() in ("SSL", "SASL_SSL"):
@@ -159,6 +163,7 @@ def confluent_to_aiokafka(
     config: TypingMapping[str, Any],
     *,
     on_unmapped: str = "warn",
+    build_ssl_context: bool = True,
 ) -> dict[str, Any]:
     """Convert a confluent-kafka config dict to aiokafka constructor kwargs.
 
@@ -177,9 +182,17 @@ def confluent_to_aiokafka(
     ``on_unmapped`` controls what happens to keys with no aiokafka equivalent
     (callbacks, librdkafka internals, ...): ``"raise"``, ``"warn"`` (default,
     key is dropped) or ``"ignore"`` (key is dropped silently).
+
+    ``build_ssl_context=False`` skips creating the ``ssl_context`` entirely
+    (``ssl.*`` keys are consumed silently). Useful when the result must be
+    serializable or the SSL files are not present on this machine.
     """
     return _confluent_to_snake(
-        config, target="aiokafka", ssl_as_files=False, on_unmapped=on_unmapped
+        config,
+        target="aiokafka",
+        ssl_as_files=False,
+        on_unmapped=on_unmapped,
+        build_ssl_context=build_ssl_context,
     )
 
 
@@ -227,6 +240,75 @@ def aiokafka_to_confluent(
     return _snake_to_confluent(
         config, kwargs, ssl_as_files=False, on_unmapped=on_unmapped
     )
+
+
+def faust_to_confluent(
+    config: TypingMapping[str, Any],
+    *,
+    on_unmapped: str = "warn",
+) -> dict[str, Any]:
+    """Convert Faust app settings to a confluent-kafka config dict.
+
+    ``config`` uses Faust (faust-streaming) app-setting names, e.g.::
+
+        {"id": "billing", "broker": "kafka://localhost:9092",
+         "broker_session_timeout": 45}
+
+    The Faust app ``id`` maps to ``group.id``, ``kafka://`` broker URLs are
+    flattened to a ``bootstrap.servers`` host list, and second-based
+    timeouts/intervals are converted to milliseconds.
+
+    ``on_unmapped`` behaves as in :func:`confluent_to_aiokafka`.
+    """
+    result: dict[str, Any] = {}
+    unmapped: list[str] = []
+
+    for key, value in config.items():
+        entry = BY_FAUST_KEY.get(key)
+        if entry is None:
+            unmapped.append(key)
+            continue
+        mapping, converter = entry
+        result[mapping.confluent_key] = value if converter is None else converter(value)
+
+    _handle_unmapped(unmapped, "confluent-kafka", on_unmapped)
+    return result
+
+
+def confluent_to_faust(
+    config: TypingMapping[str, Any],
+    *,
+    on_unmapped: str = "warn",
+) -> dict[str, Any]:
+    """Convert a confluent-kafka config dict to Faust app settings.
+
+    ``group.id`` becomes the Faust app ``id``, ``bootstrap.servers`` becomes
+    a ``;``-separated list of ``kafka://`` broker URLs, and millisecond
+    timeouts/intervals are converted to Faust's second-based settings.
+
+    Authentication cannot be expressed in Faust settings — Faust takes a
+    runtime ``broker_credentials`` object — so ``security.protocol``,
+    ``sasl.*`` and ``ssl.*`` keys are reported as unmapped.
+
+    ``on_unmapped`` behaves as in :func:`confluent_to_aiokafka`.
+    """
+    result: dict[str, Any] = {}
+    unmapped: list[str] = []
+
+    for key, value in config.items():
+        canonical = BY_CONFLUENT_KEY.get(key)
+        mapping = BY_CONFLUENT_KEY_FOR_FAUST.get(
+            canonical.confluent_key if canonical is not None else key
+        )
+        if mapping is None:
+            unmapped.append(key)
+            continue
+        result[mapping.faust_key] = (
+            value if mapping.to_faust is None else mapping.to_faust(value)
+        )
+
+    _handle_unmapped(unmapped, "faust", on_unmapped)
+    return result
 
 
 def kafka_python_to_confluent(

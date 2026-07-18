@@ -1,0 +1,9 @@
+{
+  "bootstrap_servers": "localhost:9092",
+  "group_id": "billing",
+  "client_id": "worker-1",
+  "auto_offset_reset": "earliest",
+  "enable_auto_commit": false,
+  "session_timeout_ms": 45000,
+  "isolation_level": "read_committed"
+}

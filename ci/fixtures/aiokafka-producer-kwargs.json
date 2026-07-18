@@ -1,0 +1,12 @@
+{
+  "bootstrap_servers": "localhost:9092",
+  "client_id": "kafkaesq-ci-producer",
+  "acks": "all",
+  "enable_idempotence": true,
+  "compression_type": "gzip",
+  "linger_ms": 5,
+  "max_request_size": 1048576,
+  "transaction_timeout_ms": 60000,
+  "request_timeout_ms": 30000,
+  "retry_backoff_ms": 100
+}

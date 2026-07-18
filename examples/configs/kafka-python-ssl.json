@@ -1,0 +1,9 @@
+{
+  "bootstrap_servers": ["broker1:9093", "broker2:9093"],
+  "group_id": "billing",
+  "security_protocol": "SSL",
+  "ssl_cafile": "/etc/ssl/ca.pem",
+  "ssl_certfile": "/etc/ssl/client.pem",
+  "ssl_keyfile": "/etc/ssl/client.key",
+  "ssl_check_hostname": false
+}

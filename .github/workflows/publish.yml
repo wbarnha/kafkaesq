@@ -10,6 +10,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools_scm derives the version from git history and tags.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -18,6 +21,16 @@ jobs:
           python -m pip install build twine
           python -m build
           python -m twine check dist/*
+      - name: Check built version matches release tag
+        if: github.event_name == 'release'
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [ ! -f "dist/kafkaesq-${tag}.tar.gz" ]; then
+            echo "built artifacts do not match release tag '$GITHUB_REF_NAME':" >&2
+            ls dist/ >&2
+            echo "setuptools_scm derives the version from the tag; tag releases as vX.Y.Z" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: dist
