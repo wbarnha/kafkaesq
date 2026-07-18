@@ -149,6 +149,33 @@ file, converting an SSL config to aiokafka prints a note with the equivalent
 
 YAML support requires PyYAML: `pip install kafkaesq[yaml]`.
 
+### Validating configs (including from non-Python projects)
+
+`kafkaesq validate` checks a config file without converting it: are the keys
+recognized, do the values parse, and which libraries is the config portable
+to? Because librdkafka-based clients in every language (Go, .NET, C/C++,
+Node) share confluent-kafka's dotted keys, and the Java client shares most of
+them, this works on configs from non-Python projects too:
+
+```console
+$ kafkaesq validate consumer.properties
+source: confluent (11 keys)
+ok (5): bootstrap.servers, group.id, session.timeout.ms, security.protocol, sasl.mechanism
+java-only (6):
+  ssl.truststore.location: Java truststore (JKS/PKCS12); librdkafka-family and Python clients use ssl.ca.location with a PEM file (export with keytool/openssl)
+  sasl.jaas.config: Java JAAS login string; librdkafka-family and Python clients use sasl.username / sasl.password instead (found username="svc"; password not shown)
+  ...
+portability: aiokafka 5/11 · kafka-python 5/11 · faust 3/11
+result: OK (6 warning(s))
+```
+
+Java-only keys (JKS truststores, JAAS login strings, class-based
+serializers, `max.poll.records`, ...) get targeted guidance instead of a
+generic warning; credentials found in JAAS strings are never echoed. Bad
+values (`session.timeout.ms=45s`) make validation fail with exit code 1;
+unrecognized keys are warnings unless `--strict` is passed. `--format json`
+emits the report as JSON for CI pipelines.
+
 ### Keys that can't be converted
 
 Some options only exist on one side (callbacks like `error_cb`, librdkafka

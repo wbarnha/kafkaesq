@@ -35,8 +35,15 @@ try:
 except ModuleNotFoundError:
     yaml = None
 
-from ._faust import looks_like_faust
-from ._mappings import BY_SNAKE_SSL_KEY, SSL_CONFLUENT_KEYS
+from ._faust import BY_CONFLUENT_KEY_FOR_FAUST, BY_FAUST_KEY, looks_like_faust
+from ._java import java_only_guidance
+from ._mappings import (
+    BY_CONFLUENT_KEY,
+    BY_CONFLUENT_SSL_KEY,
+    BY_SNAKE_KEY,
+    BY_SNAKE_SSL_KEY,
+    SSL_CONFLUENT_KEYS,
+)
 from .convert import (
     KafkaesqWarning,
     UnmappedConfigError,
@@ -253,6 +260,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "(snake_case kwargs). Input may be a key=value .properties file "
             "or a JSON object."
         ),
+        epilog=(
+            "See also: 'kafkaesq validate --help' to validate a config "
+            "file without converting it."
+        ),
     )
     parser.add_argument(
         "input",
@@ -307,8 +318,206 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# --- validate subcommand -------------------------------------------------
+
+
+def _lookup_key(key: str, source: str) -> tuple[str | None, Any]:
+    """Resolve ``key`` for ``source`` to (canonical confluent key, converter).
+
+    Returns ``(None, None)`` when the key is not recognized for the source.
+    """
+    if source == "confluent":
+        mapping = BY_CONFLUENT_KEY.get(key)
+        if mapping is not None:
+            return mapping.confluent_key, mapping.to_snake
+        ssl_mapping = BY_CONFLUENT_SSL_KEY.get(key)
+        if ssl_mapping is not None:
+            return ssl_mapping.confluent_key, ssl_mapping.to_snake
+        if key in SSL_CONFLUENT_KEYS:
+            return key, None
+        return None, None
+    if source == "faust":
+        entry = BY_FAUST_KEY.get(key)
+        if entry is None:
+            return None, None
+        mapping, converter = entry
+        return mapping.confluent_key, converter
+    # snake_case sources (aiokafka / kafka-python)
+    mapping = BY_SNAKE_KEY.get(key)
+    if mapping is not None:
+        return mapping.confluent_key, mapping.to_confluent
+    if source == "kafka-python":
+        ssl_mapping = BY_SNAKE_SSL_KEY.get(key)
+        if ssl_mapping is not None:
+            return ssl_mapping.confluent_key, ssl_mapping.to_confluent
+    return None, None
+
+
+def _targets_for(canonical: str) -> list[str]:
+    """Libraries (besides the source) a confluent-canonical key is usable with."""
+    targets = ["confluent"]
+    if canonical in BY_CONFLUENT_KEY or canonical in SSL_CONFLUENT_KEYS:
+        targets.append("aiokafka")
+    if canonical in BY_CONFLUENT_KEY or canonical in BY_CONFLUENT_SSL_KEY:
+        targets.append("kafka-python")
+    mapping = BY_CONFLUENT_KEY.get(canonical)
+    faust_key = mapping.confluent_key if mapping is not None else canonical
+    if faust_key in BY_CONFLUENT_KEY_FOR_FAUST:
+        targets.append("faust")
+    return targets
+
+
+def _build_validation_report(
+    config: dict[str, Any], source: str
+) -> dict[str, Any]:
+    ok: list[str] = []
+    java_only: dict[str, str] = {}
+    unrecognized: list[str] = []
+    invalid: dict[str, str] = {}
+    portable: dict[str, list[str]] = {
+        lib: [] for lib in LIBRARIES if lib != source
+    }
+
+    for key, value in config.items():
+        canonical, converter = _lookup_key(key, source)
+        if canonical is None:
+            guidance = (
+                java_only_guidance(key, value) if source == "confluent" else None
+            )
+            if guidance is not None:
+                java_only[key] = guidance
+            else:
+                unrecognized.append(key)
+            continue
+        if converter is not None:
+            try:
+                converter(value)
+            except (ValueError, TypeError) as exc:
+                invalid[key] = str(exc)
+                continue
+        ok.append(key)
+        for target in _targets_for(canonical):
+            if target in portable:
+                portable[target].append(key)
+
+    return {
+        "source": source,
+        "total": len(config),
+        "ok": ok,
+        "java_only": java_only,
+        "unrecognized": unrecognized,
+        "invalid": invalid,
+        "portability": {
+            lib: {"portable": len(keys), "total": len(config), "keys": keys}
+            for lib, keys in portable.items()
+        },
+        "valid": not invalid,
+    }
+
+
+def _print_validation_report(report: dict[str, Any], out: TextIO) -> None:
+    print(f"source: {report['source']} ({report['total']} keys)", file=out)
+    if report["ok"]:
+        print(f"ok ({len(report['ok'])}): {', '.join(report['ok'])}", file=out)
+    if report["java_only"]:
+        print(f"java-only ({len(report['java_only'])}):", file=out)
+        for key, guidance in report["java_only"].items():
+            print(f"  {key}: {guidance}", file=out)
+    if report["unrecognized"]:
+        print(
+            f"unrecognized ({len(report['unrecognized'])}): "
+            f"{', '.join(report['unrecognized'])} — may still be valid for "
+            "the source client, but kafkaesq cannot map them",
+            file=out,
+        )
+    if report["invalid"]:
+        print(f"invalid ({len(report['invalid'])}):", file=out)
+        for key, error in report["invalid"].items():
+            print(f"  {key}: {error}", file=out)
+    portability = " · ".join(
+        f"{lib} {stats['portable']}/{stats['total']}"
+        for lib, stats in report["portability"].items()
+    )
+    print(f"portability: {portability}", file=out)
+    if not report["valid"]:
+        print("result: INVALID (bad values)", file=out)
+    elif report["java_only"] or report["unrecognized"]:
+        warning_count = len(report["java_only"]) + len(report["unrecognized"])
+        print(f"result: OK ({warning_count} warning(s))", file=out)
+    else:
+        print("result: OK", file=out)
+
+
+def _build_validate_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="kafkaesq validate",
+        description=(
+            "Validate a Kafka client config file: check that keys are "
+            "recognized, values parse, and report which libraries the "
+            "config is portable to. Java-only keys (JKS truststores, JAAS, "
+            "class-based serializers, ...) get targeted guidance."
+        ),
+    )
+    parser.add_argument(
+        "input",
+        nargs="?",
+        default="-",
+        help="config file to read, or '-' for stdin (default)",
+    )
+    parser.add_argument(
+        "--from",
+        dest="source",
+        choices=LIBRARIES,
+        help="source library (default: auto-detect from key style)",
+    )
+    parser.add_argument(
+        "--input-format",
+        choices=("json", "yaml", "properties"),
+        help="input format (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--format",
+        "-f",
+        dest="fmt",
+        choices=("text", "json"),
+        default="text",
+        help="report format (default: text)",
+    )
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="also fail (exit 1) on unrecognized or Java-only keys",
+    )
+    return parser
+
+
+def _validate_main(argv: list[str], stderr: TextIO) -> int:
+    args = _build_validate_parser().parse_args(argv)
+    try:
+        text = _read_input(args.input)
+        input_format = args.input_format or _detect_input_format(args.input, text)
+        config = _load_config(text, input_format)
+        source = args.source or _detect_source(config)
+        report = _build_validation_report(config, source)
+        if args.fmt == "json":
+            print(json.dumps(report, indent=2))
+        else:
+            _print_validation_report(report, sys.stdout)
+    except (CLIError, ValueError) as exc:
+        print(f"error: {exc}", file=stderr)
+        return 1
+    if not report["valid"]:
+        return 1
+    if args.strict and (report["java_only"] or report["unrecognized"]):
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None, *, stderr: TextIO | None = None) -> int:
     stderr = stderr if stderr is not None else sys.stderr
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv[:1] == ["validate"]:
+        return _validate_main(argv[1:], stderr)
     args = _build_parser().parse_args(argv)
 
     if args.fmt == "properties" and args.target != "confluent":
