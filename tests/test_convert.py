@@ -236,3 +236,142 @@ class TestRoundTrip:
             "isolation_level": "read_committed",
         }
         assert confluent_to_aiokafka(aiokafka_to_confluent(original)) == original
+
+
+class TestConfluentToKafkaPython:
+    def test_shared_kwargs_match_aiokafka_names(self) -> None:
+        from kafkaesq import confluent_to_kafka_python
+
+        result = confluent_to_kafka_python(
+            {
+                "bootstrap.servers": "localhost:9092",
+                "group.id": "billing",
+                "enable.auto.commit": "false",
+                "auto.offset.reset": "smallest",
+                "acks": -1,
+                "compression.type": "none",
+            }
+        )
+        assert result == {
+            "bootstrap_servers": "localhost:9092",
+            "group_id": "billing",
+            "enable_auto_commit": False,
+            "auto_offset_reset": "earliest",
+            "acks": "all",
+            "compression_type": None,
+        }
+
+    def test_ssl_files_map_directly(self) -> None:
+        from kafkaesq import confluent_to_kafka_python
+
+        result = confluent_to_kafka_python(
+            {
+                "security.protocol": "ssl",
+                "ssl.ca.location": "/etc/ssl/ca.pem",
+                "ssl.certificate.location": "/etc/ssl/client.pem",
+                "ssl.key.location": "/etc/ssl/client.key",
+                "ssl.key.password": "hunter2",
+                "ssl.crl.location": "/etc/ssl/crl.pem",
+                "ssl.cipher.suites": "ECDHE-RSA-AES256-GCM-SHA384",
+                "ssl.endpoint.identification.algorithm": "none",
+            }
+        )
+        assert result == {
+            "security_protocol": "SSL",
+            "ssl_cafile": "/etc/ssl/ca.pem",
+            "ssl_certfile": "/etc/ssl/client.pem",
+            "ssl_keyfile": "/etc/ssl/client.key",
+            "ssl_password": "hunter2",
+            "ssl_crlfile": "/etc/ssl/crl.pem",
+            "ssl_ciphers": "ECDHE-RSA-AES256-GCM-SHA384",
+            "ssl_check_hostname": False,
+        }
+
+    def test_no_ssl_context_is_built(self) -> None:
+        from kafkaesq import confluent_to_kafka_python
+
+        result = confluent_to_kafka_python({"ssl.ca.location": "/etc/ssl/ca.pem"})
+        assert "ssl_context" not in result
+        assert result == {"ssl_cafile": "/etc/ssl/ca.pem"}
+
+    def test_cert_verification_toggle_is_unmapped(self) -> None:
+        from kafkaesq import confluent_to_kafka_python
+
+        with pytest.warns(KafkaesqWarning, match="enable.ssl.certificate.verification"):
+            result = confluent_to_kafka_python(
+                {"group.id": "g", "enable.ssl.certificate.verification": "false"}
+            )
+        assert result == {"group_id": "g"}
+
+    def test_unmapped_raise(self) -> None:
+        from kafkaesq import confluent_to_kafka_python
+
+        with pytest.raises(UnmappedConfigError, match="stats_cb"):
+            confluent_to_kafka_python({"stats_cb": print}, on_unmapped="raise")
+
+
+class TestKafkaPythonToConfluent:
+    def test_basic_kwargs(self) -> None:
+        from kafkaesq import kafka_python_to_confluent
+
+        result = kafka_python_to_confluent(
+            bootstrap_servers=["a:9092", "b:9092"],
+            group_id="billing",
+            enable_auto_commit=False,
+            session_timeout_ms=45000,
+        )
+        assert result == {
+            "bootstrap.servers": "a:9092,b:9092",
+            "group.id": "billing",
+            "enable.auto.commit": False,
+            "session.timeout.ms": 45000,
+        }
+
+    def test_ssl_files_map_back(self) -> None:
+        from kafkaesq import kafka_python_to_confluent
+
+        result = kafka_python_to_confluent(
+            security_protocol="SSL",
+            ssl_cafile="/etc/ssl/ca.pem",
+            ssl_certfile="/etc/ssl/client.pem",
+            ssl_keyfile="/etc/ssl/client.key",
+            ssl_password="hunter2",
+            ssl_check_hostname=False,
+        )
+        assert result == {
+            "security.protocol": "SSL",
+            "ssl.ca.location": "/etc/ssl/ca.pem",
+            "ssl.certificate.location": "/etc/ssl/client.pem",
+            "ssl.key.location": "/etc/ssl/client.key",
+            "ssl.key.password": "hunter2",
+            "ssl.endpoint.identification.algorithm": "none",
+        }
+
+    def test_ssl_context_is_unmapped(self) -> None:
+        from kafkaesq import kafka_python_to_confluent
+
+        context = ssl.create_default_context()
+        with pytest.warns(KafkaesqWarning, match="ssl_context"):
+            result = kafka_python_to_confluent(
+                bootstrap_servers="a:9092", ssl_context=context
+            )
+        assert result == {"bootstrap.servers": "a:9092"}
+
+    def test_aiokafka_reverse_does_not_accept_ssl_files(self) -> None:
+        with pytest.warns(KafkaesqWarning, match="ssl_cafile"):
+            result = aiokafka_to_confluent(ssl_cafile="/etc/ssl/ca.pem")
+        assert result == {}
+
+    def test_round_trip(self) -> None:
+        from kafkaesq import confluent_to_kafka_python, kafka_python_to_confluent
+
+        original = {
+            "bootstrap.servers": "localhost:9092",
+            "group.id": "billing",
+            "security.protocol": "SSL",
+            "ssl.ca.location": "/etc/ssl/ca.pem",
+            "ssl.endpoint.identification.algorithm": "https",
+            "session.timeout.ms": 45000,
+            "acks": "all",
+        }
+        assert kafka_python_to_confluent(confluent_to_kafka_python(original)) == original

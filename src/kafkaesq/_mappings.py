@@ -1,9 +1,13 @@
-"""Mapping table between confluent-kafka (librdkafka) and aiokafka configs.
+"""Mapping tables between confluent-kafka (librdkafka), aiokafka and kafka-python.
 
 confluent-kafka uses librdkafka-style dotted keys with loosely typed values
 (``{"bootstrap.servers": "host:9092", "enable.auto.commit": "false"}``), while
-aiokafka takes snake_case constructor kwargs with native Python types
-(``bootstrap_servers="host:9092", enable_auto_commit=False``).
+aiokafka and kafka-python take snake_case constructor kwargs with native
+Python types (``bootstrap_servers="host:9092", enable_auto_commit=False``).
+The kwarg names are identical between aiokafka and kafka-python for every
+option in the shared table below; the libraries only diverge on SSL, where
+kafka-python takes file paths directly (``ssl_cafile``, ...) and aiokafka
+only takes a ready-made ``ssl_context``.
 
 Each :class:`Mapping` entry describes one config option that exists on both
 sides, plus optional value converters for the cases where the two libraries
@@ -39,7 +43,7 @@ def _to_upper(value: Any) -> str:
     return str(value).upper()
 
 
-def _acks_to_aiokafka(value: Any) -> Any:
+def _acks_to_snake(value: Any) -> Any:
     # librdkafka: -1, "all" (and any int); aiokafka: 0, 1, "all".
     if isinstance(value, str) and value.strip().lower() == "all":
         return "all"
@@ -51,7 +55,7 @@ def _acks_to_confluent(value: Any) -> Any:
     return "all" if value == "all" else int(value)
 
 
-def _compression_to_aiokafka(value: Any) -> Any:
+def _compression_to_snake(value: Any) -> Any:
     # librdkafka: "none", "gzip", "snappy", "lz4", "zstd"; aiokafka uses None
     # instead of "none".
     if value is None:
@@ -74,7 +78,7 @@ _OFFSET_RESET_ALIASES = {
 }
 
 
-def _offset_reset_to_aiokafka(value: Any) -> str:
+def _offset_reset_to_snake(value: Any) -> str:
     lowered = str(value).strip().lower()
     return _OFFSET_RESET_ALIASES.get(lowered, lowered)
 
@@ -82,8 +86,8 @@ def _offset_reset_to_aiokafka(value: Any) -> str:
 @dataclass(frozen=True)
 class Mapping:
     confluent_key: str
-    aiokafka_key: str
-    to_aiokafka: Callable[[Any], Any] | None = None
+    snake_key: str
+    to_snake: Callable[[Any], Any] | None = None
     to_confluent: Callable[[Any], Any] | None = None
     confluent_aliases: tuple[str, ...] = field(default=())
 
@@ -106,11 +110,11 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping("sasl.password", "sasl_plain_password"),
     Mapping("sasl.kerberos.service.name", "sasl_kerberos_service_name"),
     # --- producer ---
-    Mapping("acks", "acks", _acks_to_aiokafka, _acks_to_confluent,
+    Mapping("acks", "acks", _acks_to_snake, _acks_to_confluent,
             confluent_aliases=("request.required.acks",)),
     Mapping("enable.idempotence", "enable_idempotence", _to_bool),
     Mapping("compression.type", "compression_type",
-            _compression_to_aiokafka, _compression_to_confluent,
+            _compression_to_snake, _compression_to_confluent,
             confluent_aliases=("compression.codec",)),
     Mapping("linger.ms", "linger_ms", _to_int,
             confluent_aliases=("queue.buffering.max.ms",)),
@@ -121,7 +125,7 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping("group.id", "group_id"),
     Mapping("group.instance.id", "group_instance_id"),
     Mapping("auto.offset.reset", "auto_offset_reset",
-            _offset_reset_to_aiokafka),
+            _offset_reset_to_snake),
     Mapping("enable.auto.commit", "enable_auto_commit", _to_bool),
     Mapping("auto.commit.interval.ms", "auto_commit_interval_ms", _to_int),
     Mapping("fetch.min.bytes", "fetch_min_bytes", _to_int),
@@ -132,7 +136,7 @@ MAPPINGS: tuple[Mapping, ...] = (
     Mapping("heartbeat.interval.ms", "heartbeat_interval_ms", _to_int),
     Mapping("max.poll.interval.ms", "max_poll_interval_ms", _to_int),
     Mapping("isolation.level", "isolation_level",
-            to_aiokafka=lambda v: str(v).strip().lower()),
+            to_snake=lambda v: str(v).strip().lower()),
     Mapping("check.crcs", "check_crcs", _to_bool),
 )
 
@@ -147,10 +151,40 @@ SSL_CONFLUENT_KEYS: tuple[str, ...] = (
     "enable.ssl.certificate.verification",
 )
 
+
+def _endpoint_algo_to_check_hostname(value: Any) -> bool:
+    # librdkafka: "https" (verify hostname) or "none".
+    return str(value).strip().lower() != "none"
+
+
+def _check_hostname_to_endpoint_algo(value: Any) -> str:
+    return "https" if _to_bool(value) else "none"
+
+
+# kafka-python takes SSL file paths as plain kwargs, so unlike aiokafka these
+# librdkafka options map one-to-one instead of folding into an ssl_context.
+SSL_FILE_MAPPINGS: tuple[Mapping, ...] = (
+    Mapping("ssl.ca.location", "ssl_cafile"),
+    Mapping("ssl.certificate.location", "ssl_certfile"),
+    Mapping("ssl.key.location", "ssl_keyfile"),
+    Mapping("ssl.key.password", "ssl_password"),
+    Mapping("ssl.crl.location", "ssl_crlfile"),
+    Mapping("ssl.cipher.suites", "ssl_ciphers"),
+    Mapping("ssl.endpoint.identification.algorithm", "ssl_check_hostname",
+            _endpoint_algo_to_check_hostname, _check_hostname_to_endpoint_algo),
+)
+
+BY_CONFLUENT_SSL_KEY: dict[str, Mapping] = {
+    _m.confluent_key: _m for _m in SSL_FILE_MAPPINGS
+}
+BY_SNAKE_SSL_KEY: dict[str, Mapping] = {
+    _m.snake_key: _m for _m in SSL_FILE_MAPPINGS
+}
+
 BY_CONFLUENT_KEY: dict[str, Mapping] = {}
 for _m in MAPPINGS:
     BY_CONFLUENT_KEY[_m.confluent_key] = _m
     for _alias in _m.confluent_aliases:
         BY_CONFLUENT_KEY[_alias] = _m
 
-BY_AIOKAFKA_KEY: dict[str, Mapping] = {_m.aiokafka_key: _m for _m in MAPPINGS}
+BY_SNAKE_KEY: dict[str, Mapping] = {_m.snake_key: _m for _m in MAPPINGS}

@@ -1,4 +1,4 @@
-"""Convert Kafka client configs between confluent-kafka and aiokafka."""
+"""Convert Kafka client configs between confluent-kafka, aiokafka and kafka-python."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import warnings
 from typing import Any, Mapping as TypingMapping
 
 from ._mappings import (
-    BY_AIOKAFKA_KEY,
     BY_CONFLUENT_KEY,
+    BY_CONFLUENT_SSL_KEY,
+    BY_SNAKE_KEY,
+    BY_SNAKE_SSL_KEY,
     SSL_CONFLUENT_KEYS,
 )
 from ._mappings import _to_bool  # noqa: PLC2701 - internal reuse
@@ -18,6 +20,8 @@ __all__ = [
     "UnmappedConfigError",
     "aiokafka_to_confluent",
     "confluent_to_aiokafka",
+    "confluent_to_kafka_python",
+    "kafka_python_to_confluent",
 ]
 
 _ON_UNMAPPED_CHOICES = ("raise", "warn", "ignore")
@@ -55,7 +59,7 @@ def _handle_unmapped(keys: list[str], target: str, on_unmapped: str) -> None:
         warnings.warn(
             f"dropping config key(s) with no {target} equivalent: {keys!r}",
             KafkaesqWarning,
-            stacklevel=3,
+            stacklevel=4,
         )
 
 
@@ -85,6 +89,66 @@ def _build_ssl_context(config: TypingMapping[str, Any]) -> ssl.SSLContext:
     return context
 
 
+def _confluent_to_snake(
+    config: TypingMapping[str, Any],
+    *,
+    target: str,
+    ssl_as_files: bool,
+    on_unmapped: str,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    unmapped: list[str] = []
+    ssl_keys_present = False
+
+    for key, value in config.items():
+        mapping = BY_CONFLUENT_KEY.get(key)
+        if mapping is None and ssl_as_files:
+            mapping = BY_CONFLUENT_SSL_KEY.get(key)
+        if mapping is not None:
+            converted = value if mapping.to_snake is None else mapping.to_snake(value)
+            result[mapping.snake_key] = converted
+        elif not ssl_as_files and key in SSL_CONFLUENT_KEYS:
+            ssl_keys_present = True
+        else:
+            unmapped.append(key)
+
+    if ssl_keys_present:
+        result["ssl_context"] = _build_ssl_context(config)
+
+    _handle_unmapped(unmapped, target, on_unmapped)
+    return result
+
+
+def _snake_to_confluent(
+    config: TypingMapping[str, Any] | None,
+    kwargs: dict[str, Any],
+    *,
+    ssl_as_files: bool,
+    on_unmapped: str,
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(config or {})
+    merged.update(kwargs)
+
+    result: dict[str, Any] = {}
+    unmapped: list[str] = []
+
+    for key, value in merged.items():
+        mapping = BY_SNAKE_KEY.get(key)
+        if mapping is None and ssl_as_files:
+            mapping = BY_SNAKE_SSL_KEY.get(key)
+        if mapping is None:
+            unmapped.append(key)
+            continue
+        if key == "bootstrap_servers" and isinstance(value, (list, tuple)):
+            value = ",".join(value)
+        elif mapping.to_confluent is not None:
+            value = mapping.to_confluent(value)
+        result[mapping.confluent_key] = value
+
+    _handle_unmapped(unmapped, "confluent-kafka", on_unmapped)
+    return result
+
+
 def confluent_to_aiokafka(
     config: TypingMapping[str, Any],
     *,
@@ -105,25 +169,29 @@ def confluent_to_aiokafka(
     (callbacks, librdkafka internals, ...): ``"raise"``, ``"warn"`` (default,
     key is dropped) or ``"ignore"`` (key is dropped silently).
     """
-    result: dict[str, Any] = {}
-    unmapped: list[str] = []
-    ssl_keys_present = False
+    return _confluent_to_snake(
+        config, target="aiokafka", ssl_as_files=False, on_unmapped=on_unmapped
+    )
 
-    for key, value in config.items():
-        mapping = BY_CONFLUENT_KEY.get(key)
-        if mapping is not None:
-            converted = value if mapping.to_aiokafka is None else mapping.to_aiokafka(value)
-            result[mapping.aiokafka_key] = converted
-        elif key in SSL_CONFLUENT_KEYS:
-            ssl_keys_present = True
-        else:
-            unmapped.append(key)
 
-    if ssl_keys_present:
-        result["ssl_context"] = _build_ssl_context(config)
+def confluent_to_kafka_python(
+    config: TypingMapping[str, Any],
+    *,
+    on_unmapped: str = "warn",
+) -> dict[str, Any]:
+    """Convert a confluent-kafka config dict to kafka-python constructor kwargs.
 
-    _handle_unmapped(unmapped, "aiokafka", on_unmapped)
-    return result
+    Returns a dict of snake_case kwargs suitable for ``KafkaProducer`` /
+    ``KafkaConsumer``. Unlike aiokafka, kafka-python accepts SSL file paths
+    directly, so librdkafka ``ssl.*`` options map to ``ssl_cafile``,
+    ``ssl_certfile``, ``ssl_keyfile``, ``ssl_password``, ``ssl_crlfile``,
+    ``ssl_ciphers`` and ``ssl_check_hostname`` instead of an ``ssl_context``.
+
+    ``on_unmapped`` behaves as in :func:`confluent_to_aiokafka`.
+    """
+    return _confluent_to_snake(
+        config, target="kafka-python", ssl_as_files=True, on_unmapped=on_unmapped
+    )
 
 
 def aiokafka_to_confluent(
@@ -147,22 +215,27 @@ def aiokafka_to_confluent(
 
     ``on_unmapped`` behaves as in :func:`confluent_to_aiokafka`.
     """
-    merged: dict[str, Any] = dict(config or {})
-    merged.update(kwargs)
+    return _snake_to_confluent(
+        config, kwargs, ssl_as_files=False, on_unmapped=on_unmapped
+    )
 
-    result: dict[str, Any] = {}
-    unmapped: list[str] = []
 
-    for key, value in merged.items():
-        mapping = BY_AIOKAFKA_KEY.get(key)
-        if mapping is None:
-            unmapped.append(key)
-            continue
-        if key == "bootstrap_servers" and isinstance(value, (list, tuple)):
-            value = ",".join(value)
-        elif mapping.to_confluent is not None:
-            value = mapping.to_confluent(value)
-        result[mapping.confluent_key] = value
+def kafka_python_to_confluent(
+    config: TypingMapping[str, Any] | None = None,
+    *,
+    on_unmapped: str = "warn",
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Convert kafka-python constructor kwargs to a confluent-kafka config dict.
 
-    _handle_unmapped(unmapped, "confluent-kafka", on_unmapped)
-    return result
+    Accepts either a dict of kwargs, keyword arguments, or both, like
+    :func:`aiokafka_to_confluent`. kafka-python's SSL file kwargs
+    (``ssl_cafile``, ``ssl_certfile``, ...) map back to their librdkafka
+    ``ssl.*`` counterparts; ``ssl_context`` cannot be decomposed into file
+    paths and is treated as unmapped.
+
+    ``on_unmapped`` behaves as in :func:`confluent_to_aiokafka`.
+    """
+    return _snake_to_confluent(
+        config, kwargs, ssl_as_files=True, on_unmapped=on_unmapped
+    )

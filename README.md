@@ -5,9 +5,10 @@ A library for parsing Kafka configurations for all Python libraries.
 Kafka client libraries in Python don't agree on how a config should be
 spelled. [confluent-kafka](https://github.com/confluentinc/confluent-kafka-python)
 takes librdkafka-style dicts with dotted keys and loosely typed values, while
-[aiokafka](https://github.com/aio-libs/aiokafka) takes snake_case constructor
-kwargs with native Python types. **kafkaesq** converts between the two, in both
-directions, so one config can drive both clients.
+[aiokafka](https://github.com/aio-libs/aiokafka) and
+[kafka-python](https://github.com/dpkp/kafka-python) take snake_case
+constructor kwargs with native Python types. **kafkaesq** converts between
+them, in both directions, so one config can drive all of these clients.
 
 ```
 pip install kafkaesq
@@ -69,6 +70,31 @@ consumer = Consumer(conf)
 ```
 
 A plain dict of kwargs works too: `aiokafka_to_confluent(kwargs_dict)`.
+
+### confluent-kafka ↔ kafka-python
+
+`confluent_to_kafka_python` and `kafka_python_to_confluent` work the same
+way. kafka-python shares aiokafka's kwarg names for everything in the mapping
+table, but takes SSL file paths directly, so librdkafka `ssl.*` options map
+one-to-one instead of folding into an `ssl_context`:
+
+```python
+from kafkaesq import confluent_to_kafka_python
+
+kwargs = confluent_to_kafka_python({
+    "bootstrap.servers": "localhost:9092",
+    "security.protocol": "SSL",
+    "ssl.ca.location": "/etc/ssl/ca.pem",
+    "ssl.certificate.location": "/etc/ssl/client.pem",
+    "ssl.key.location": "/etc/ssl/client.key",
+})
+# {'bootstrap_servers': 'localhost:9092', 'security_protocol': 'SSL',
+#  'ssl_cafile': '/etc/ssl/ca.pem', 'ssl_certfile': '/etc/ssl/client.pem',
+#  'ssl_keyfile': '/etc/ssl/client.key'}
+
+from kafka import KafkaConsumer
+consumer = KafkaConsumer("payments", **kwargs)
+```
 
 ### Keys that can't be converted
 
