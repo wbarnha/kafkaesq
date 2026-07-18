@@ -95,6 +95,7 @@ def _confluent_to_snake(
     target: str,
     ssl_as_files: bool,
     on_unmapped: str,
+    build_ssl_context: bool = True,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
     unmapped: list[str] = []
@@ -112,7 +113,7 @@ def _confluent_to_snake(
         else:
             unmapped.append(key)
 
-    if not ssl_as_files:
+    if not ssl_as_files and build_ssl_context:
         if ssl_keys_present:
             result["ssl_context"] = _build_ssl_context(config)
         elif str(result.get("security_protocol", "")).upper() in ("SSL", "SASL_SSL"):
@@ -159,6 +160,7 @@ def confluent_to_aiokafka(
     config: TypingMapping[str, Any],
     *,
     on_unmapped: str = "warn",
+    build_ssl_context: bool = True,
 ) -> dict[str, Any]:
     """Convert a confluent-kafka config dict to aiokafka constructor kwargs.
 
@@ -177,9 +179,17 @@ def confluent_to_aiokafka(
     ``on_unmapped`` controls what happens to keys with no aiokafka equivalent
     (callbacks, librdkafka internals, ...): ``"raise"``, ``"warn"`` (default,
     key is dropped) or ``"ignore"`` (key is dropped silently).
+
+    ``build_ssl_context=False`` skips creating the ``ssl_context`` entirely
+    (``ssl.*`` keys are consumed silently). Useful when the result must be
+    serializable or the SSL files are not present on this machine.
     """
     return _confluent_to_snake(
-        config, target="aiokafka", ssl_as_files=False, on_unmapped=on_unmapped
+        config,
+        target="aiokafka",
+        ssl_as_files=False,
+        on_unmapped=on_unmapped,
+        build_ssl_context=build_ssl_context,
     )
 
 

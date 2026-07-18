@@ -96,6 +96,40 @@ from kafka import KafkaConsumer
 consumer = KafkaConsumer("payments", **kwargs)
 ```
 
+### Command line
+
+The `kafkaesq` command (also `python -m kafkaesq`) converts config *files*.
+Input may be a librdkafka/Java-style `key=value` .properties file, JSON, or
+YAML — auto-detected from the file extension and content, or forced with
+`--input-format`. Output is JSON by default; `--format yaml` writes YAML and
+`--format properties` writes a .properties file (confluent target only).
+
+```console
+$ kafkaesq client.properties --to aiokafka
+{
+  "bootstrap_servers": "pkc-00000.us-west-2.aws.confluent.cloud:9092",
+  "sasl_mechanism": "PLAIN",
+  ...
+}
+
+$ kafkaesq client.yaml --to kafka-python --format yaml
+bootstrap_servers: localhost:9092
+group_id: billing
+
+$ kafkaesq kwargs.json --to confluent --format properties -o client.properties
+
+$ cat client.properties | kafkaesq --to kafka-python
+```
+
+The source library is auto-detected from key style (dotted keys → confluent,
+snake_case → aiokafka/kafka-python); override with `--from`. Keys that can't
+be converted are reported as warnings on stderr (`--on-unmapped raise|warn|ignore`).
+Because an `ssl_context` is a runtime object that can't be written to a config
+file, converting an SSL config to aiokafka prints a note with the equivalent
+`create_ssl_context(...)` call instead.
+
+YAML support requires PyYAML: `pip install kafkaesq[yaml]`.
+
 ### Keys that can't be converted
 
 Some options only exist on one side (callbacks like `error_cb`, librdkafka

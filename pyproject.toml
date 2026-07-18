@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kafkaesq"
-version = "0.1.0"
-description = "Convert Kafka client configs between confluent-kafka and aiokafka"
+version = "0.2.0"
+description = "Convert Kafka client configs between confluent-kafka, aiokafka, and kafka-python"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "William Barnhart", email = "williambbarnhart@gmail.com" }]
@@ -25,12 +25,16 @@ classifiers = [
 keywords = ["kafka", "aiokafka", "confluent-kafka", "librdkafka", "config"]
 dependencies = []
 
+[project.scripts]
+kafkaesq = "kafkaesq.cli:run"
+
 [project.urls]
 Homepage = "https://github.com/wbarnha/kafkaesq"
 Issues = "https://github.com/wbarnha/kafkaesq/issues"
 
 [project.optional-dependencies]
-dev = ["pytest>=7"]
+dev = ["pytest>=7", "PyYAML"]
+yaml = ["PyYAML"]
 # For integration tests that construct real clients from converted configs.
 integration = ["aiokafka", "kafka-python", "confluent-kafka"]
 

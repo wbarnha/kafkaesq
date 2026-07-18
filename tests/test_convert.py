@@ -382,3 +382,29 @@ class TestKafkaPythonToConfluent:
             "acks": "all",
         }
         assert kafka_python_to_confluent(confluent_to_kafka_python(original)) == original
+
+
+class TestBuildSslContextFlag:
+    def test_ssl_keys_consumed_silently_when_disabled(self) -> None:
+        import warnings as warnings_module
+
+        with warnings_module.catch_warnings():
+            warnings_module.simplefilter("error")
+            result = confluent_to_aiokafka(
+                {
+                    "bootstrap.servers": "localhost:9093",
+                    "security.protocol": "SSL",
+                    "ssl.ca.location": "/does/not/exist/ca.pem",
+                },
+                build_ssl_context=False,
+            )
+        assert result == {
+            "bootstrap_servers": "localhost:9093",
+            "security_protocol": "SSL",
+        }
+
+    def test_no_default_context_for_sasl_ssl_when_disabled(self) -> None:
+        result = confluent_to_aiokafka(
+            {"security.protocol": "SASL_SSL"}, build_ssl_context=False
+        )
+        assert result == {"security_protocol": "SASL_SSL"}
