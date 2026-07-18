@@ -35,17 +35,20 @@ try:
 except ModuleNotFoundError:
     yaml = None
 
+from ._faust import looks_like_faust
 from ._mappings import BY_SNAKE_SSL_KEY, SSL_CONFLUENT_KEYS
 from .convert import (
     KafkaesqWarning,
     UnmappedConfigError,
     aiokafka_to_confluent,
     confluent_to_aiokafka,
+    confluent_to_faust,
     confluent_to_kafka_python,
+    faust_to_confluent,
     kafka_python_to_confluent,
 )
 
-LIBRARIES = ("confluent", "aiokafka", "kafka-python")
+LIBRARIES = ("confluent", "aiokafka", "kafka-python", "faust")
 
 
 class CLIError(Exception):
@@ -127,9 +130,23 @@ def _load_config(text: str, input_format: str) -> dict[str, Any]:
 def _detect_source(config: dict[str, Any]) -> str:
     if any("." in key for key in config):
         return "confluent"
+    if looks_like_faust(config):
+        return "faust"
     if any(key in BY_SNAKE_SSL_KEY for key in config):
         return "kafka-python"
     return "aiokafka"
+
+
+def _to_confluent_view(
+    config: dict[str, Any], source: str, on_unmapped: str
+) -> dict[str, Any]:
+    if source == "confluent":
+        return dict(config)
+    if source == "faust":
+        return faust_to_confluent(config, on_unmapped=on_unmapped)
+    if source == "kafka-python":
+        return kafka_python_to_confluent(config, on_unmapped=on_unmapped)
+    return aiokafka_to_confluent(config, on_unmapped=on_unmapped)
 
 
 def _convert(
@@ -140,25 +157,18 @@ def _convert(
             f"source and target are both {source!r}; nothing to convert "
             "(pass --from to override auto-detection)"
         )
-    if source == "confluent":
-        if target == "aiokafka":
-            # An ssl_context is a runtime object that cannot be written to a
-            # config file, and building one would require the SSL files to
-            # exist on this machine — skip it (a note is printed instead).
-            return confluent_to_aiokafka(
-                config, on_unmapped=on_unmapped, build_ssl_context=False
-            )
-        return confluent_to_kafka_python(config, on_unmapped=on_unmapped)
-
-    if source == "kafka-python":
-        conf = kafka_python_to_confluent(config, on_unmapped=on_unmapped)
-    else:
-        conf = aiokafka_to_confluent(config, on_unmapped=on_unmapped)
+    # Every conversion goes source -> confluent representation -> target;
+    # the confluent step is the identity when the source is confluent, and
+    # its keys are all mapped, so it adds no extra unmapped noise.
+    conf = _to_confluent_view(config, source, on_unmapped)
     if target == "confluent":
         return conf
-    # snake_case -> snake_case goes through the confluent representation;
-    # its keys are all mapped, so no extra unmapped noise is produced here.
+    if target == "faust":
+        return confluent_to_faust(conf, on_unmapped=on_unmapped)
     if target == "aiokafka":
+        # An ssl_context is a runtime object that cannot be written to a
+        # config file, and building one would require the SSL files to
+        # exist on this machine — skip it (a note is printed instead).
         return confluent_to_aiokafka(
             conf, on_unmapped=on_unmapped, build_ssl_context=False
         )
@@ -173,12 +183,15 @@ _SSL_CONTEXT_ARGS = (
 )
 
 
-def _confluent_view(config: dict[str, Any], source: str) -> dict[str, Any]:
-    if source == "confluent":
-        return config
-    if source == "kafka-python":
-        return kafka_python_to_confluent(config, on_unmapped="ignore")
-    return aiokafka_to_confluent(config, on_unmapped="ignore")
+_SECURITY_KEY_PREFIXES = ("sasl.", "ssl.")
+
+
+def _security_keys(conf: dict[str, Any]) -> list[str]:
+    return [
+        key
+        for key in conf
+        if key == "security.protocol" or key.startswith(_SECURITY_KEY_PREFIXES)
+    ]
 
 
 def _needs_ssl_context(conf: dict[str, Any]) -> bool:
@@ -319,9 +332,19 @@ def main(argv: list[str] | None = None, *, stderr: TextIO | None = None) -> int:
             print(f"warning: {caught_warning.message}", file=stderr)
 
         if args.target == "aiokafka":
-            conf_view = _confluent_view(config, source)
+            conf_view = _to_confluent_view(config, source, "ignore")
             if _needs_ssl_context(conf_view):
                 print(_ssl_context_note(conf_view), file=stderr)
+        elif args.target == "faust":
+            conf_view = _to_confluent_view(config, source, "ignore")
+            if _security_keys(conf_view):
+                print(
+                    "note: faust configures authentication with the "
+                    "broker_credentials app setting, a runtime object that "
+                    "cannot be written to a config file — e.g. "
+                    "faust.SASLCredentials(username=..., password=...)",
+                    file=stderr,
+                )
 
         if args.fmt == "properties":
             output_text = _to_properties(result)

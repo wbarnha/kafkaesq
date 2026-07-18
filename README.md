@@ -71,6 +71,11 @@ consumer = Consumer(conf)
 
 A plain dict of kwargs works too: `aiokafka_to_confluent(kwargs_dict)`.
 
+`faust_to_confluent` / `confluent_to_faust` convert
+[Faust](https://github.com/faust-streaming/faust) app settings the same way
+(Faust configures authentication with a runtime `broker_credentials` object,
+so security keys are reported as unmapped in that direction).
+
 ### confluent-kafka ↔ kafka-python
 
 `confluent_to_kafka_python` and `kafka_python_to_confluent` work the same
@@ -121,8 +126,22 @@ $ kafkaesq kwargs.json --to confluent --format properties -o client.properties
 $ cat client.properties | kafkaesq --to kafka-python
 ```
 
+[Faust](https://github.com/faust-streaming/faust) app settings are supported
+as a fourth library (`--to faust`, or as auto-detected input): the app `id`
+maps to `group.id`, `kafka://` broker URLs map to `bootstrap.servers`, and
+Faust's second-based timeouts convert to/from milliseconds:
+
+```console
+$ kafkaesq faust.yaml --to confluent --format properties
+$ kafkaesq client.properties --to faust --format yaml
+broker: kafka://localhost:9092
+broker_session_timeout: 45
+id: billing
+```
+
 The source library is auto-detected from key style (dotted keys → confluent,
-snake_case → aiokafka/kafka-python); override with `--from`. Keys that can't
+`broker`/`broker_*`/`consumer_*`/`producer_*` → faust, snake_case →
+aiokafka/kafka-python); override with `--from`. Keys that can't
 be converted are reported as warnings on stderr (`--on-unmapped raise|warn|ignore`).
 Because an `ssl_context` is a runtime object that can't be written to a config
 file, converting an SSL config to aiokafka prints a note with the equivalent

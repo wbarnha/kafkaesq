@@ -23,7 +23,9 @@ from .convert import (
     UnmappedConfigError,
     aiokafka_to_confluent,
     confluent_to_aiokafka,
+    confluent_to_faust,
     confluent_to_kafka_python,
+    faust_to_confluent,
     kafka_python_to_confluent,
 )
 
@@ -32,7 +34,9 @@ __all__ = [
     "UnmappedConfigError",
     "aiokafka_to_confluent",
     "confluent_to_aiokafka",
+    "confluent_to_faust",
     "confluent_to_kafka_python",
+    "faust_to_confluent",
     "kafka_python_to_confluent",
 ]
 
