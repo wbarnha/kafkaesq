@@ -234,6 +234,11 @@ pip install -e .[dev]
 pytest
 ```
 
+Versioning is automatic via [setuptools_scm](https://setuptools-scm.readthedocs.io/):
+the version comes from the git tag, so releasing is just creating a GitHub
+Release tagged `vX.Y.Z` — no version bump commit needed. Untagged builds get
+PEP 440 dev versions (`0.2.1.dev3+g1a2b3c4`).
+
 The suite includes integration tests that feed converted configs to the real
 `confluent_kafka`, `aiokafka`, and `kafka-python` client constructors (no
 broker needed — all three validate option names at construction time). They
