@@ -1,0 +1,9 @@
+# Faust (faust-streaming) app settings. Note: timeouts are in SECONDS,
+# the app id doubles as the consumer group id, and brokers are kafka:// URLs.
+id: billing
+broker: kafka://localhost:9092
+broker_session_timeout: 45
+broker_heartbeat_interval: 3
+consumer_auto_offset_reset: earliest
+producer_acks: -1
+producer_compression_type: gzip

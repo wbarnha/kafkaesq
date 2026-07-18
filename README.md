@@ -1,5 +1,10 @@
 # kafkaesq
 
+[![CI](https://github.com/wbarnha/kafkaesq/actions/workflows/ci.yml/badge.svg)](https://github.com/wbarnha/kafkaesq/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/kafkaesq)](https://pypi.org/project/kafkaesq/)
+[![Python versions](https://img.shields.io/pypi/pyversions/kafkaesq)](https://pypi.org/project/kafkaesq/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A library for parsing Kafka configurations for all Python libraries.
 
 Kafka client libraries in Python don't agree on how a config should be
@@ -14,8 +19,23 @@ them, in both directions, so one config can drive all of these clients.
 pip install kafkaesq
 ```
 
-No runtime dependencies — you don't need either Kafka library installed to
+No runtime dependencies — you don't need any Kafka library installed to
 convert configs.
+
+**Supported libraries:**
+[confluent-kafka](https://github.com/confluentinc/confluent-kafka-python)
+(and by extension every librdkafka-based client) ·
+[aiokafka](https://github.com/aio-libs/aiokafka) ·
+[kafka-python](https://github.com/dpkp/kafka-python) ·
+[Faust](https://github.com/faust-streaming/faust)
+
+**Contents:**
+[Python API](#usage) ·
+[Command line](#command-line) ·
+[Validating configs](#validating-configs-including-from-non-python-projects) ·
+[Unconvertible keys](#keys-that-cant-be-converted) ·
+[Examples](#examples) ·
+[Development](#development)
 
 ## Usage
 
@@ -49,7 +69,10 @@ Values are normalized along the way: string booleans and integers become real
 `bool`/`int`, librdkafka offset-reset aliases (`smallest`, `largest`, ...) are
 translated, `acks=-1` becomes `"all"`, `compression.type="none"` becomes
 `None`, and librdkafka `ssl.*` file options are folded into a ready-made
-`ssl_context`.
+`ssl_context` (an SSL security protocol with no `ssl.*` keys gets a default
+context, matching librdkafka's system-CA fallback — pass
+`build_ssl_context=False` to skip contexts entirely, e.g. when the SSL files
+don't exist on the converting machine).
 
 ### aiokafka → confluent-kafka
 
@@ -195,6 +218,15 @@ confluent_to_aiokafka(conf, on_unmapped="raise")   # UnmappedConfigError
 confluent_to_aiokafka(conf, on_unmapped="ignore")  # drop silently
 ```
 
+## Examples
+
+The [`examples/`](examples/) directory has working config files for every
+supported library — a Confluent Cloud template, a Java client config with
+Java-only keys, a confluent-kafka-go config with `go.*` binding keys, a Faust
+YAML app config, aiokafka/kafka-python kwargs — plus a walkthrough README of
+CLI commands to run against them and Python scripts showing the API end to
+end.
+
 ## Development
 
 ```
@@ -211,3 +243,11 @@ skip automatically unless the clients are installed:
 pip install -e .[dev,integration]
 pytest
 ```
+
+CI additionally verifies converted configs against non-Python clients:
+a Go job constructs real confluent-kafka-go consumers/producers from
+CLI-converted configs, a Java job checks every emitted `.properties` key
+against the Java client's `ConsumerConfig` and constructs a `KafkaConsumer`,
+and a Faust job asserts converted settings are reflected in a real
+`faust.App` — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+and [`ci/`](ci/).
